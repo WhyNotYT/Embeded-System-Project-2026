@@ -1,0 +1,40 @@
+ERC report (2026-02-20T14:55:16+0200, Encoding UTF8)
+
+***** Sheet /
+[power_pin_not_driven]: Input Power pin not driven by any Output Power pins
+    ; error
+    @(1850 mils, 6650 mils): Symbol U2 Pin 5 [VDDIO, Power input, Line]
+[power_pin_not_driven]: Input Power pin not driven by any Output Power pins
+    ; error
+    @(6850 mils, 2350 mils): Symbol J5 Pin A4_B9 [VBUS_A, Power input, Line]
+[power_pin_not_driven]: Input Power pin not driven by any Output Power pins
+    ; error
+    @(8550 mils, 4500 mils): Symbol U5 Pin 1 [VIN, Power input, Line]
+[power_pin_not_driven]: Input Power pin not driven by any Output Power pins
+    ; error
+    @(10050 mils, 5800 mils): Symbol #PWR028 Pin 1 [Power input, Line]
+[lib_symbol_mismatch]: Symbol 'R_Small' doesn't match copy in library 'Device'
+    ; warning
+    @(6650 mils, 2550 mils): Symbol R10 [R_Small]
+[lib_symbol_mismatch]: Symbol 'R_Small' doesn't match copy in library 'Device'
+    ; warning
+    @(8250 mils, 2850 mils): Symbol R12 [R_Small]
+[unconnected_wire_endpoint]: Unconnected wire endpoint
+    ; warning
+    @(7700 mils, 5850 mils): Vertical Wire, length 50 mils
+[lib_symbol_mismatch]: Symbol 'R_Small' doesn't match copy in library 'Device'
+    ; warning
+    @(9300 mils, 3250 mils): Symbol R13 [R_Small]
+[multiple_net_names]: Both -BATT and GND are attached to the same items; -BATT will be used in the netlist
+    ; warning
+    @(10050 mils, 5900 mils): Symbol #PWR029 Pin 1 [Power input, Line]
+    @(10600 mils, 1850 mils): Symbol #PWR024 Pin 1 [Power input, Line]
+[lib_symbol_mismatch]: Symbol 'R_Small' doesn't match copy in library 'Device'
+    ; warning
+    @(10750 mils, 2800 mils): Symbol R14 [R_Small]
+[multiple_net_names]: Both VCC and +BATT are attached to the same items; VCC will be used in the netlist
+    ; warning
+    @(7300 mils, 4600 mils): Global Label 'VCC'
+    @(10050 mils, 5800 mils): Symbol #PWR028 Pin 1 [Power input, Line]
+
+ ** ERC messages: 11  Errors 4  Warnings 7

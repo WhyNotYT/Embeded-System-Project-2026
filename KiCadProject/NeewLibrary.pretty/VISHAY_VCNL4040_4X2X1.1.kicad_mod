@@ -1,0 +1,212 @@
+(footprint "VISHAY_VCNL4040_4X2X1.1"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(property "Reference" "REF**"
+		(at 0.566913 -2.849573 0)
+		(layer "F.SilkS")
+		(uuid "588f96ea-6b3b-4d8d-88ec-83482bbeefd0")
+		(effects
+			(font
+				(size 0.600965 0.600965)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "VISHAY_VCNL4040_4X2X1.1"
+		(at 7.133557 2.758245 0)
+		(layer "F.Fab")
+		(uuid "867a7815-454c-451f-a2f4-968e825ee941")
+		(effects
+			(font
+				(size 0.601143 0.601143)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "f08d5740-143d-4137-9a34-dea69cf2ad51")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "082787d3-a9ad-43d5-9eaa-c65f4c9ef911")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_circle
+		(center -1.907 -2.05)
+		(end -1.857 -2.05)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.SilkS")
+		(uuid "cf89e38d-cd56-48d7-8cd3-08d85a5f876b")
+	)
+	(fp_line
+		(start -1.5 -2.5)
+		(end 1.5 -2.5)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "e7380d77-708f-4580-9c15-66a8e485fa22")
+	)
+	(fp_line
+		(start -1.5 2.5)
+		(end -1.5 -2.5)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "d0c0f09e-6efa-4ab6-a120-b5367e5dcc01")
+	)
+	(fp_line
+		(start 1.5 -2.5)
+		(end 1.5 2.5)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "df7f3bbd-b7f8-440e-8789-b72d014b661c")
+	)
+	(fp_line
+		(start 1.5 2.5)
+		(end -1.5 2.5)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "7fa4c274-bdb8-4dcf-ad1e-60d615898eed")
+	)
+	(fp_line
+		(start 1.175 2.17)
+		(end -1.175 2.17)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "B.Fab")
+		(uuid "8726dc10-43d0-4ea4-8dd1-7147419b0b2c")
+	)
+	(fp_line
+		(start -1.175 -2.17)
+		(end 1.175 -2.17)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "de9593af-39c3-4861-a8ba-1ca9d9dbd5d1")
+	)
+	(fp_line
+		(start -1.175 2.17)
+		(end -1.175 -2.17)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3860dcaf-be9b-4256-82f9-95858fd3581f")
+	)
+	(fp_line
+		(start 1.175 -2.17)
+		(end 1.175 2.17)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "d3035565-5086-4be7-abab-06c6380af96f")
+	)
+	(pad "1" smd rect
+		(at -0.7 -1.6125)
+		(size 0.7 0.725)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(solder_mask_margin 0.102)
+		(uuid "9fe4d028-4058-4ec9-9dd0-fdc0d578daa2")
+	)
+	(pad "2" smd rect
+		(at -0.7 -0.5375)
+		(size 0.7 0.725)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(solder_mask_margin 0.102)
+		(uuid "2fc054c3-d293-4ef2-a483-087faa888309")
+	)
+	(pad "3" smd rect
+		(at -0.7 0.5375)
+		(size 0.7 0.725)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(solder_mask_margin 0.102)
+		(uuid "a8c85e7c-a01c-457a-ba95-845cc10438db")
+	)
+	(pad "4" smd rect
+		(at -0.7 1.6125)
+		(size 0.7 0.725)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(solder_mask_margin 0.102)
+		(uuid "0f89a78c-4b0d-47ff-95bf-848f7bcec682")
+	)
+	(pad "5" smd rect
+		(at 0.7 1.6125)
+		(size 0.7 0.725)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(solder_mask_margin 0.102)
+		(uuid "f2aadd19-2582-4099-b0e0-c5a8809f201f")
+	)
+	(pad "6" smd rect
+		(at 0.7 0.5375)
+		(size 0.7 0.725)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(solder_mask_margin 0.102)
+		(uuid "39d20f2b-586b-4610-8bc6-e02d69c6df3c")
+	)
+	(pad "7" smd rect
+		(at 0.7 -0.5375)
+		(size 0.7 0.725)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(solder_mask_margin 0.102)
+		(uuid "c85ce1cf-3606-4f8d-a7f0-dfd518cd2ecc")
+	)
+	(pad "8" smd rect
+		(at 0.7 -1.6125)
+		(size 0.7 0.725)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(solder_mask_margin 0.102)
+		(uuid "cbfd94c8-6ffb-4201-953b-a1c240842bb1")
+	)
+	(embedded_fonts no)
+	(model "C:/Users/anazar23/Downloads/vcnl4040/84352VCNL4040.stp"
+		(offset
+			(xyz 0 -2 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz -0 -0 -0)
+		)
+	)
+)

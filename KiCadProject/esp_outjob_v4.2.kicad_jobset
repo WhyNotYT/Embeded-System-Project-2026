@@ -1,0 +1,17 @@
+{
+  "jobs": [],
+  "meta": {
+    "version": 1
+  },
+  "outputs": [
+    {
+      "description": "",
+      "id": "d82e153e-1090-4ecc-bc7b-062cd2d6c485",
+      "only": [],
+      "settings": {
+        "output_path": "esp_outjob_v4.2"
+      },
+      "type": "folder"
+    }
+  ]
+}
