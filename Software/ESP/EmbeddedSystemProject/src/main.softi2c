@@ -1,0 +1,342 @@
+//
+// ESP32-S3 Smart Watch — main.cpp (sensor init/probe only)
+//
+// HRS (MAX30101)  -> hardware I2C  (Wire, PIN_HRS_SDA/SCL), external pull-ups
+// PROX (VCNL4040) -> software I2C  (bit-banged, PIN_PROX_SDA/SCL), NO external
+//                    pull-ups on this net, so we use the ESP32's internal
+//                    pull-ups and clock the bus slowly (10 kHz, which the
+//                    VCNL4040 datasheet lists as its minimum supported SCL
+//                    frequency).
+//
+// The IMU (LSM6DSRX) has its own dedicated pins (PIN_IMU_SDA/SCL) and is
+// intentionally left alone here — that bus/peripheral is reserved for when
+// the IMU driver is brought up later.
+//
+// Also generates the 1.8V rail for the MAX30101 via PWM (analogWrite).
+//
+
+#include <Arduino.h>
+#include <Wire.h>
+
+// devxplained MAX3010x Sensor Library (works with MAX30101)
+#include <MAX3010x.h>
+
+#include "pins.h"
+
+// ── Sensor init status flags ──────────────────────────────────────────────
+static bool g_hrs_ok = false;
+static bool g_prox_ok = false;
+
+// ── HRS bus: hardware I2C ────────────────────────────────────────────────
+// MAX30101 supports I2C fast mode (400 kHz).
+static TwoWire WireHRS = TwoWire(0);
+static const uint32_t kHrsI2cFreqHz = 400000;
+
+MAX30101 hrSensor(0xAE, WireHRS);
+
+// ── PROX bus: software (bit-banged) I2C ──────────────────────────────────
+// No external pull-ups on PIN_PROX_SDA/SCL -> rely on the ESP32's internal
+// weak pull-ups and keep the clock low (10 kHz) so the RC time constant of
+// those internal pull-ups (vs. bus/parasitic capacitance) doesn't cause
+// missed edges.
+static const uint32_t kProxI2cFreqHz = 10000;
+static const uint8_t kVcnl4040Addr = 0x60;
+
+class SoftI2C
+{
+public:
+  SoftI2C(uint8_t sda, uint8_t scl, uint32_t freqHz)
+      : _sda(sda), _scl(scl)
+  {
+    setClock(freqHz);
+  }
+
+  void begin()
+  {
+    // Idle state = both lines released high via internal pull-ups.
+    pinMode(_sda, INPUT_PULLUP);
+    pinMode(_scl, INPUT_PULLUP);
+  }
+
+  void setClock(uint32_t freqHz)
+  {
+    // Half-period in microseconds (min 1us to avoid a zero delay at very
+    // high requested rates).
+    uint32_t half = 500000UL / freqHz;
+    _halfPeriodUs = half ? half : 1;
+  }
+
+  // Returns true if the target ACKed its address.
+  bool beginTransmission(uint8_t addr7)
+  {
+    _err = false;
+    start();
+    return writeByte((uint8_t)((addr7 << 1) | 0)); // R/W = write
+  }
+
+  bool write(uint8_t b) { return writeByte(b); }
+
+  uint8_t endTransmission(bool sendStop = true)
+  {
+    if (sendStop)
+      stop();
+    return _err ? 1 : 0;
+  }
+
+  // Simple blocking read of `count` bytes into buf, NACKing the last byte.
+  bool requestFrom(uint8_t addr7, uint8_t count, uint8_t *buf)
+  {
+    start();
+    if (!writeByte((uint8_t)((addr7 << 1) | 1))) // R/W = read
+    {
+      stop();
+      return false;
+    }
+    for (uint8_t i = 0; i < count; i++)
+      buf[i] = readByte(i < (count - 1));
+    stop();
+    return true;
+  }
+
+private:
+  uint8_t _sda, _scl;
+  uint32_t _halfPeriodUs;
+  bool _err = false;
+
+  void delayHalf() { delayMicroseconds(_halfPeriodUs); }
+
+  // Open-drain style drive: "high" = release to input+pullup,
+  // "low" = drive the pin low.
+  void sdaRelease() { pinMode(_sda, INPUT_PULLUP); }
+  void sdaLow()
+  {
+    pinMode(_sda, OUTPUT);
+    digitalWrite(_sda, LOW);
+  }
+  void sclRelease() { pinMode(_scl, INPUT_PULLUP); }
+  void sclLow()
+  {
+    pinMode(_scl, OUTPUT);
+    digitalWrite(_scl, LOW);
+  }
+
+  bool readSDA()
+  {
+    pinMode(_sda, INPUT_PULLUP);
+    return digitalRead(_sda);
+  }
+
+  // Clock stretching aware: after releasing SCL, wait for the slave to
+  // let it go high (harmless for VCNL4040, but cheap safety net).
+  void sclReleaseAndWait()
+  {
+    pinMode(_scl, INPUT_PULLUP);
+    uint32_t guard = 1000; // ~1ms worst case at 1us/iter
+    while (digitalRead(_scl) == LOW && guard--)
+      delayMicroseconds(1);
+  }
+
+  void start()
+  {
+    sdaRelease();
+    sclRelease();
+    delayHalf();
+    sdaLow();
+    delayHalf();
+    sclLow();
+    delayHalf();
+  }
+
+  void stop()
+  {
+    sdaLow();
+    delayHalf();
+    sclReleaseAndWait();
+    delayHalf();
+    sdaRelease();
+    delayHalf();
+  }
+
+  // Returns true on ACK.
+  bool writeByte(uint8_t b)
+  {
+    for (uint8_t i = 0; i < 8; i++)
+    {
+      if (b & 0x80)
+        sdaRelease();
+      else
+        sdaLow();
+      b <<= 1;
+      delayHalf();
+      sclReleaseAndWait();
+      delayHalf();
+      sclLow();
+    }
+    // ACK clock
+    sdaRelease();
+    delayHalf();
+    sclReleaseAndWait();
+    delayHalf();
+    bool ack = !readSDA(); // slave pulls SDA low to ACK
+    sclLow();
+    if (!ack)
+      _err = true;
+    return ack;
+  }
+
+  uint8_t readByte(bool ack)
+  {
+    uint8_t val = 0;
+    sdaRelease();
+    for (uint8_t i = 0; i < 8; i++)
+    {
+      delayHalf();
+      sclReleaseAndWait();
+      val <<= 1;
+      if (readSDA())
+        val |= 1;
+      delayHalf();
+      sclLow();
+    }
+    // master sends ACK (more bytes wanted) or NACK (last byte)
+    if (ack)
+      sdaLow();
+    else
+      sdaRelease();
+    delayHalf();
+    sclReleaseAndWait();
+    delayHalf();
+    sclLow();
+    sdaRelease();
+    return val;
+  }
+};
+
+static SoftI2C proxI2C(PIN_PROX_SDA, PIN_PROX_SCL, kProxI2cFreqHz);
+
+// ── I2C probe (hardware bus, e.g. HRS) ───────────────────────────────────
+static bool i2c_probe(TwoWire &wire, uint8_t addr, const char *device_name)
+{
+  wire.beginTransmission(addr);
+  uint8_t err = wire.endTransmission();
+  if (err == 0)
+  {
+    Serial.printf("[I2C] %-12s found    at 0x%02X\n", device_name, addr);
+    return true;
+  }
+  Serial.printf("[I2C] %-12s NOT found at 0x%02X (err %u)\n", device_name, addr, err);
+  return false;
+}
+
+// ── I2C probe (software/bit-banged bus, e.g. PROX) ───────────────────────
+static bool soft_i2c_probe(SoftI2C &wire, uint8_t addr, const char *device_name)
+{
+  uint8_t err = wire.beginTransmission(addr) ? 0 : 1;
+  wire.endTransmission();
+  if (err == 0)
+  {
+    Serial.printf("[SoftI2C] %-12s found    at 0x%02X\n", device_name, addr);
+    return true;
+  }
+  Serial.printf("[SoftI2C] %-12s NOT found at 0x%02X (err %u)\n", device_name, addr, err);
+  return false;
+}
+
+// ── VCNL4040 minimal register access over SoftI2C ────────────────────────
+// (No Adafruit_VCNL4040 here since that library requires a real TwoWire;
+// talking to the two registers we need directly is simpler than adapting it.)
+static bool vcnl4040_write16(SoftI2C &wire, uint8_t reg, uint16_t val)
+{
+  if (!wire.beginTransmission(kVcnl4040Addr))
+  {
+    wire.endTransmission();
+    return false;
+  }
+  wire.write(reg);
+  wire.write((uint8_t)(val & 0xFF));        // LSB first
+  wire.write((uint8_t)((val >> 8) & 0xFF)); // MSB
+  return wire.endTransmission() == 0;
+}
+
+static bool vcnl4040_read16(SoftI2C &wire, uint8_t reg, uint16_t *val)
+{
+  if (!wire.beginTransmission(kVcnl4040Addr))
+    return false;
+  wire.write(reg);
+  wire.endTransmission(false); // repeated start, no stop
+  uint8_t buf[2] = {0, 0};
+  if (!wire.requestFrom(kVcnl4040Addr, 2, buf))
+    return false;
+  *val = (uint16_t)buf[0] | ((uint16_t)buf[1] << 8);
+  return true;
+}
+
+static bool vcnl4040_init(SoftI2C &wire)
+{
+  // Device ID register 0x0C should read back 0x0186.
+  uint16_t id = 0;
+  if (!vcnl4040_read16(wire, 0x0C, &id) || id != 0x0186)
+  {
+    Serial.printf("[PROX] VCNL4040 ID mismatch (got 0x%04X)\n", id);
+    return false;
+  }
+
+  // PS_CONF1/PS_CONF2 (reg 0x03): defaults with PS_SD (bit0 of LSB) = 0
+  // to power the proximity sensor on.
+  if (!vcnl4040_write16(wire, 0x03, 0x0000))
+  {
+    Serial.println("[PROX] Failed to write PS_CONF1/2");
+    return false;
+  }
+
+  Serial.println("[PROX] VCNL4040 initialized");
+  return true;
+}
+
+// ── Output ~1.2 V on IO8 via PWM (no true DAC on ESP32-S3) ───────────────
+// Uses the Arduino-core analogWrite() PWM wrapper instead of calling the
+// LEDC (ledcSetup/ledcAttachPin/ledcWrite) API directly.
+static void hrs_18v_init(void)
+{
+  // 8-bit PWM resolution (0-255). duty = (1.2 / 3.3) * 255 ≈ 93
+  pinMode(PIN_HRS_18V, OUTPUT);
+  pinMode(PIN_LLS_EN, OUTPUT);
+  digitalWrite(PIN_LLS_EN, LOW);
+  analogWriteResolution(8);
+  analogWriteFrequency(100);
+  analogWrite(PIN_HRS_18V, (uint8_t)((1.2 / 3.3) * 255));
+}
+
+void setup()
+{
+  Serial.begin(115200);
+  delay(200);
+
+  hrs_18v_init();
+
+  // Hardware I2C for the HRS.
+  WireHRS.begin(PIN_HRS_SDA, PIN_HRS_SCL, kHrsI2cFreqHz);
+  g_hrs_ok = i2c_probe(WireHRS, 0x57, "MAX30101");
+  if (g_hrs_ok)
+  {
+    g_hrs_ok = hrSensor.begin();
+    Serial.printf("[HRS] init %s\n", g_hrs_ok ? "OK" : "FAILED");
+  }
+
+  // Software (bit-banged) I2C for the PROX, internal pull-ups, 10 kHz.
+  proxI2C.begin();
+  g_prox_ok = soft_i2c_probe(proxI2C, kVcnl4040Addr, "VCNL4040");
+  if (g_prox_ok)
+    g_prox_ok = vcnl4040_init(proxI2C);
+
+  // NOTE: PIN_IMU_SDA/SCL are intentionally untouched here — that bus is
+  // reserved for the IMU (LSM6DSRX) bring-up that will be added later.
+}
+
+void loop()
+{
+  Serial.printf("[status] HRS: %s  PROX: %s\n",
+                g_hrs_ok ? "OK" : "FAIL",
+                g_prox_ok ? "OK" : "FAIL");
+  delay(5000);
+}

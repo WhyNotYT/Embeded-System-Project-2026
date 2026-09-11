@@ -1,0 +1,261 @@
+//
+// ESP32-S3 Smart Watch — main.cpp (sensor init/probe only)
+//
+// HRS (MAX30101)  -> hardware I2C bus 0 (PIN_HRS_SDA/SCL), external pull-ups,
+//                     400 kHz.
+// PROX (VCNL4040) -> hardware I2C bus 1 (PIN_PROX_SDA/SCL), NO external
+//                     pull-ups, so we enable the ESP32's internal pull-ups
+//                     and clock the bus at 10 kHz (VCNL4040's minimum rated
+//                     SCL frequency).
+//
+// Also generates the 1.8V rail for the MAX30101 via PWM (analogWrite).
+// The IMU (LSM6DSRX) has its own pins and is left untouched — reserved for
+// later bring-up.
+//
+
+#include <Arduino.h>
+#include <Wire.h>
+
+// devxplained MAX3010x Sensor Library (works with MAX30101)
+#include <MAX3010x.h>
+
+// Adafruit VCNL4040
+#include <Adafruit_VCNL4040.h>
+
+#include "pins.h"
+
+// ── Sensor init status flags ──────────────────────────────────────────────
+static bool g_hrs_ok = false;
+static bool g_prox_ok = false;
+
+// ── HRS bus: hardware I2C #0 ──────────────────────────────────────────────
+// MAX30101 supports I2C fast mode (400 kHz); has external pull-ups.
+static TwoWire WireHRS = TwoWire(0);
+static const uint32_t kHrsI2cFreqHz = 400000;
+
+MAX30101 hrSensor(0xAE, WireHRS);
+
+// ── PROX bus: hardware I2C #1 ─────────────────────────────────────────────
+// No external pull-ups on this net -> rely on internal pull-ups and keep
+// the clock slow.
+static TwoWire WireProx = TwoWire(1);
+static const uint32_t kProxI2cFreqHz = 10000;
+
+Adafruit_VCNL4040 proxSensor;
+
+// ── HRS re-probe timing ───────────────────────────────────────────────────
+static const uint32_t kHrsRetryIntervalMs = 500; // how often to retry while probing
+static uint32_t g_hrsLastAttemptMs = 0;
+static uint32_t g_proxLastAttemptMs = 0;
+
+// After this many consecutive failed HRS attempts, assume the bus may be
+// wedged (SDA/SCL stuck low by a mid-transaction slave) and re-run bus
+// recovery before trying again.
+static const uint8_t kHrsRecoveryAfterFails = 3;
+static uint8_t g_hrsConsecutiveFails = 0;
+
+// ── I2C bus recovery ───────────────────────────────────────────────────────
+// Bit-bangs up to 9 clock pulses on SCL (per the I2C spec's recommended
+// recovery procedure) to free a slave that's stuck holding SDA low
+// mid-transaction, then issues a manual STOP condition. Operates on the
+// ESP-side (A-port) pins; the NL5X4002 auto-sense translator relays the
+// resulting transitions through to the B-side (sensor) pins on its own,
+// so the B-side doesn't need to be touched directly.
+static void i2c_bus_recovery(uint8_t sda_pin, uint8_t scl_pin)
+{
+  pinMode(scl_pin, OUTPUT_OPEN_DRAIN);
+  pinMode(sda_pin, INPUT_PULLUP);
+
+  if (digitalRead(sda_pin) == HIGH)
+  {
+    return; // bus already idle-high, nothing to recover
+  }
+
+  Serial.println("[I2C] SDA stuck low, attempting bus recovery...");
+
+  for (int i = 0; i < 9; i++)
+  {
+    digitalWrite(scl_pin, LOW);
+    delayMicroseconds(5);
+    digitalWrite(scl_pin, HIGH);
+    delayMicroseconds(5);
+    if (digitalRead(sda_pin) == HIGH)
+    {
+      break; // slave released SDA early
+    }
+  }
+
+  // Manual STOP: SDA low->high while SCL is held high.
+  pinMode(sda_pin, OUTPUT_OPEN_DRAIN);
+  digitalWrite(sda_pin, LOW);
+  delayMicroseconds(5);
+  digitalWrite(scl_pin, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(sda_pin, HIGH);
+  delayMicroseconds(5);
+
+  Serial.printf("[I2C] recovery result: SDA=%d\n", digitalRead(sda_pin));
+}
+
+// ── I2C probe — checks a single known address ────────────────────────────
+static bool i2c_probe(TwoWire &wire, uint8_t addr, const char *device_name)
+{
+
+  wire.beginTransmission(addr);
+  uint8_t err = wire.endTransmission();
+  if (err == 0)
+  {
+    Serial.printf("[I2C] %-12s found    at 0x%02X\n", device_name, addr);
+    return true;
+  }
+  else
+  {
+    Serial.printf("[I2C] %-12s NOT found at 0x%02X (err %u)\n", device_name, addr, err);
+    return false;
+  }
+}
+
+#define HRS_18V_LEDC_CHANNEL 0
+#define HRS_18V_LEDC_RES_BITS 8
+
+// Conservative max: assume worst-case 40 MHz effective LEDC clock source
+// (not the full 80 MHz APB clock) so divider = clk/(freq*2^res) stays >= 1.
+// 40 MHz / 256 = 156250 Hz.
+static const uint32_t kHrs18vFreqHz = 156250;
+
+static void hrs_18v_init(void)
+{
+  pinMode(PIN_LLS_EN, OUTPUT);
+  digitalWrite(PIN_LLS_EN, HIGH);
+
+  if (ledcSetup(HRS_18V_LEDC_CHANNEL, kHrs18vFreqHz, HRS_18V_LEDC_RES_BITS) == 0)
+  {
+    Serial.println("[HRS] ledcSetup FAILED even at fallback frequency");
+    return;
+  }
+  ledcAttachPin(PIN_HRS_18V, HRS_18V_LEDC_CHANNEL);
+
+  // duty = (1.8 / 3.3) * 255 ≈ 139  (target ~1.8V nominal on the rail,
+  // giving margin above the sensor's ~1.7V minimum instead of running
+  // right at the floor)
+  ledcWrite(HRS_18V_LEDC_CHANNEL, (uint8_t)((1.8 / 3.3) * 255));
+
+  delay(10); // let the RC filter on the 1.8V rail settle before I2C probes
+}
+
+// Attempt one HRS probe + library init. Called repeatedly from loop() until
+// it succeeds, so the rail/bus stay untouched (no repeated ledcSetup calls)
+// and only the actual device handshake is retried. Tracks consecutive
+// failures so loop() can trigger bus recovery if the bus looks wedged.
+static void hrs_try_init(void)
+{
+  g_hrs_ok = i2c_probe(WireHRS, 0x57, "MAX30101");
+  if (g_hrs_ok)
+  {
+    g_hrs_ok = hrSensor.begin();
+    Serial.printf("[HRS] init %s\n", g_hrs_ok ? "OK" : "FAILED");
+  }
+
+  if (g_hrs_ok)
+  {
+    g_hrsConsecutiveFails = 0;
+  }
+  else
+  {
+    g_hrsConsecutiveFails++;
+  }
+}
+
+static void prox_try_init(void)
+{
+  g_prox_ok = i2c_probe(WireProx, 0x60, "VCNL4040");
+  if (g_prox_ok)
+  {
+    g_prox_ok = proxSensor.begin(VCNL4040_I2CADDR_DEFAULT, &WireProx);
+    Serial.printf("[PROX] init %s\n", g_prox_ok ? "OK" : "FAILED");
+  }
+}
+
+void setup()
+{
+  Serial.begin(115200);
+  delay(200);
+
+  hrs_18v_init();
+
+  // Recover the HRS bus before Wire brings the pins up as I2C, in case a
+  // prior reset/brownout left the sensor mid-transaction holding SDA low.
+  i2c_bus_recovery(PIN_HRS_SDA, PIN_HRS_SCL);
+
+  // Hardware I2C bus 0 for the HRS.
+  WireHRS.begin(PIN_HRS_SDA, PIN_HRS_SCL, kHrsI2cFreqHz);
+
+  // Hardware I2C bus 1 for the PROX. Enable internal pull-ups before
+  // Wire.begin() brings the pins up, since there are no external ones,
+  // then clock the bus slowly to keep edges clean through the weak
+  // internal pull-ups.
+  pinMode(PIN_PROX_SDA, INPUT_PULLUP);
+  pinMode(PIN_PROX_SCL, INPUT_PULLUP);
+  WireProx.begin(PIN_PROX_SDA, PIN_PROX_SCL, kProxI2cFreqHz);
+
+  // NOTE: PIN_IMU_SDA/SCL are intentionally untouched here — reserved for
+  // the IMU (LSM6DSRX) bring-up that will be added later.
+
+  // Initial attempts right away.
+  hrs_try_init();
+  prox_try_init();
+  g_hrsLastAttemptMs = millis();
+  g_proxLastAttemptMs = g_hrsLastAttemptMs;
+
+  pinMode(PIN_BATT_IN, INPUT);
+}
+
+void loop()
+{
+  uint32_t now = millis();
+
+  // Keep retrying the HRS handshake on an interval instead of re-running
+  // the whole setup() (which would re-touch the PWM rail and both I2C
+  // buses every time). Once it succeeds, this just stops re-probing.
+
+  Serial.println(analogRead(PIN_BATT_IN));
+
+  if (!g_hrs_ok && (now - g_hrsLastAttemptMs >= kHrsRetryIntervalMs))
+  {
+    g_hrsLastAttemptMs = now;
+
+    // If we've failed several times in a row, the bus may be wedged
+    // (a slave stuck holding SDA low mid-transaction) rather than just
+    // absent. Re-run recovery before the next attempt.
+    if (g_hrsConsecutiveFails >= kHrsRecoveryAfterFails)
+    {
+      WireHRS.end();
+      i2c_bus_recovery(PIN_HRS_SDA, PIN_HRS_SCL);
+      WireHRS.begin(PIN_HRS_SDA, PIN_HRS_SCL, kHrsI2cFreqHz);
+      g_hrsConsecutiveFails = 0;
+    }
+
+    hrs_try_init();
+  }
+
+  // Same retry pattern for PROX, on its own independent timer.
+  if (!g_prox_ok && (now - g_proxLastAttemptMs >= kHrsRetryIntervalMs))
+  {
+    g_proxLastAttemptMs = now;
+    prox_try_init();
+  }
+
+  if (g_prox_ok)
+  {
+    uint16_t proxCounts = proxSensor.getProximity();
+    uint16_t whiteCounts = 1;
+    float lux = proxSensor.getLux();
+    Serial.printf("[PROX] proximity: %u  white: %u  ambient: %.2f lux\n",
+                  proxCounts, whiteCounts, lux);
+  }
+
+  Serial.printf("[status] HRS: %s  PROX: %s\n",
+                g_hrs_ok ? "OK" : "FAIL",
+                g_prox_ok ? "OK" : "FAIL");
+  delay(200);
+}

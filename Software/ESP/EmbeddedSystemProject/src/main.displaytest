@@ -1,0 +1,64 @@
+//
+// ESP32-S3 Smart Watch — main.cpp (DISPLAY-ONLY DEBUG BUILD)
+//
+// Sensors, FreeRTOS tasks, and I2C are all removed. This build does nothing
+// but bring up the display and hammer it with simple, slow, verbose test
+// patterns in loop() so we can isolate the "dim white flash then black"
+// symptom from any RTOS/task-timing or shared-bus interaction.
+//
+
+#include <Arduino.h>
+#include "pins.h"
+#include "display.h"
+
+static void log_fill(const char *label, uint16_t colour)
+{
+  Serial.printf("[TEST] Filling screen: %s\n", label);
+  disp_fill(colour);
+  Serial.printf("[TEST] Fill call returned for: %s\n", label);
+}
+
+void setup()
+{
+  Serial.begin(115200);
+  delay(500);
+  Serial.println("\n\n=== DISPLAY-ONLY DEBUG BUILD ===");
+
+  Serial.println("[INIT] Calling disp_init()...");
+  disp_init();
+  Serial.println("[INIT] disp_init() returned.");
+
+  // No throttling for this test — we want to see raw behaviour.
+  disp_set_min_update_interval(0);
+
+  Serial.println("[INIT] Setup complete. Entering slow colour-cycle loop.");
+}
+
+void loop()
+{
+  // Long, deliberate holds (3s) so "flash then black" is unambiguous —
+  // if the panel is actually holding the colour, you'll clearly see 3
+  // full seconds of solid colour, not a flash.
+  log_fill("RED", COL_RED);
+  delay(3000);
+
+  log_fill("GREEN", COL_GREEN);
+  delay(3000);
+
+  log_fill("BLUE", COL_BLUE);
+  delay(3000);
+
+  log_fill("WHITE", COL_WHITE);
+  delay(3000);
+
+  log_fill("BLACK", COL_BLACK);
+  delay(3000);
+
+  // Static text, no fill afterwards — isolates disp_draw_string /
+  // disp_draw_char + set_addr_window from disp_fill_rect's bulk path.
+  Serial.println("[TEST] Drawing test string...");
+  disp_fill(COL_BLACK);
+  disp_draw_string(4, 4, "DISPLAY TEST", COL_CYAN, COL_BLACK, 2);
+  Serial.println("[TEST] disp_draw_string() returned.");
+  delay(5000);
+}
